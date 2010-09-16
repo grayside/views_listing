@@ -1,0 +1,236 @@
+<?php
+// $Id$
+
+/**
+ * @file
+ *  Creating listings of Views. Useful to display Views that represent distinctive content in the system.
+ *  Can be used to create an index of listing pages, such as a syndication page of all Views-based RSS feeds.
+ */
+
+/**
+ * Implementation of hook_help().
+ */
+function views_listing_help($path, $arg) {
+  switch ($path) {
+    case 'admin/help#views_listing':
+      return t('Display a listing of Views with clickable locations. Programmatically "query" for only those Views you want. Visit the !config.',
+        array('!config' => l(t('Views Listing settings'), 'admin/settings/views_listing')));
+  }
+}
+
+/**
+ * Menu callback for 'syndication'
+ * @todo Cache views.
+ */
+function views_listing_callback($plugin = 'rss') {
+  if (!is_array($plugin)) {
+    $plugin = views_listing_load($plugin);
+  }
+  $views = views_get_all_views();
+  $views = views_listing_filter_views($views, $plugin);
+  views_listing_process_output($views);
+  return theme('views_listing_views', $views);
+}
+
+/**
+ * Filter views based on various criteria.
+ *
+ * @param $views
+ *  Array. Listing of all Views objects known to the system.
+ * @param $plugin
+ *  Array. The specific Views filtering plugin being used.
+ *
+ * @return
+ *  Array. Array of Views that survived the filtering process.
+ */
+function views_listing_filter_views($views, $plugin) {
+  $items = array();
+  foreach ($views as $view) {
+    // No need to process disabled Views.
+    if ($view->disabled == TRUE) {
+      continue;
+    }
+    // Every plugin contains multiple filters. All filters are "AND"'d together.
+    foreach ($plugin as $filter_set) {
+      // Every filter set must have at least one passed filter.
+      $set_valid = FALSE;
+      foreach ($filter_set as $filter) {
+        switch ($filter['check']) {
+          // Compare values from the root of the View definition.
+          // This is used to filter the entire View.
+          case 'view':
+            if ($view->$filter['key'] == $filter['value']) {
+              $items[$view->name] = array('view' => $view, 'displays' => $view->display);
+              $set_valid = TRUE;
+            }
+            break;
+          // Compare values against those within each Display.
+          case 'display':
+            $displays = array();
+            foreach ($view->display as $key => $display) {
+              $current = $display->$filter['key'];
+              if ($current == $filter['value']) {
+                // If the display is passed by the filter, pass on to the $displays array.
+                $displays[$key] = $display;
+              }
+            }
+            if (!empty($displays)) {
+              $items[$view->name] = array('view' => $view, 'displays' => $displays);
+              $set_valid = TRUE;
+            }
+            break;
+        }
+      }
+      if (!$set_valid) {
+        // The filter set is invalid, the View is removed and no further filters need be checked.
+        unset($items[$view->name]);
+        break;
+      }
+    }
+  }
+  views_listing_process_output($items);
+  return $items;
+}
+
+/**
+ * Review every display of every View. Only those displays with a menu path will be kept.
+ *
+ * Validated displays will be assigned information needed for output processing.
+ * This is done here to facilitate alter hook.
+ */
+function views_listing_process_output(&$views) {
+  foreach ($views as $name => $view) {
+    $displays = array();
+    foreach ($view['displays'] as $key => $display) {
+      // View has no associated path, drop it.
+      if (empty($display->display_options['path']) || !$view['view']->access($key)) {
+        unset($views[$name]['displays'][$key]);
+        continue;
+      }
+      // Build raw data for listing this View.
+      $views[$name]['raw'][$key] = array(
+        'href' => views_listing_clean_path($display->display_options['path'], $display->display_options['arguments']),
+        'title' => views_listing_get_display_title($display, $view['view']),
+        'attributes' => array(
+          'title' => $view['view']->description,
+        ),
+      );
+    }
+    // Drop any View that is bereft of viable Displays.
+    if (empty($views[$name]['raw'])) {
+      unset($views[$name]);
+      continue;
+    }
+    drupal_alter('views_listing_pre_render', $views[$name]['raw'], $view['view']);
+  }
+}
+
+/**
+ * Identify the best human-readable name for the Views display.
+ *
+ * @param $display
+ *  The Views display object for which the title is being generated.
+ * @param $view
+ *  The Views object in question.
+ *
+ * @return
+ *  String. The best title available.
+ */
+function views_listing_get_display_title($display, $view) {
+  if (!empty($display->display_options['title'])) {
+    return $display->display_options['title'];
+  }
+  elseif (!empty($view->display['default']->display_options['title'])) {
+    return $view->display['default']->display_options['title'];
+  }
+  return $view->name;
+}
+
+/**
+ * Process the path to the display and clean it up for general usage.
+ *
+ * @param $path
+ *  String. The path in question.
+ * @param $args
+ *  Array. The argument definitions for the display.
+ *
+ * @return
+ *  String. The corrected path.
+ *
+ * @todo
+ *  The path might still have embedded percentage symbols after it's been cleaned using Views arguments.
+ *  Percentage symbols at the end should be trimmed off. Percentage symbols in the middle should /invalidate/ the display.
+ */
+function views_listing_clean_path($path, $args) {
+  while(($pos = strpos($path, '%')) !== FALSE) {
+    if ($args == NULL) {
+      // If there are no more arguments, it is time to bail.
+      break;
+    }
+    $arg = array_shift($args);
+    $path = substr_replace($path, $arg['wildcard'], $pos, 1);
+  }
+  return $path;
+}
+
+/**
+ * Load views listing query plugins.
+ *
+ * @param $plugin
+ *  String. Plugin name to specify which plugin you need.
+ *
+ * @return
+ *  One or all listing plugins.
+ */
+function views_listing_load($plugin = NULL) {
+  static $query;
+  
+  if (empty($query)) {
+    $query = array(
+      'rss' => array(array(
+        array('check' => 'display', 'key' => 'display_plugin', 'value' => 'feed'),
+        array('check' => 'display', 'key' => "display_options['style_plugin']", 'value' => 'views_xml'),
+        array('check' => 'display', 'key' => "display_options['style_plugin']", 'value' => 'views_xhtml'),
+      )),
+    );
+    $query = array_merge($query, module_invoke_all('views_listing_plugin_info'));
+    drupal_alter('views_listing_plugin_info', $query);
+  }
+  return isset($plugin) ? $query[$plugin] : $query;
+}
+
+/**
+ * Implementation of hook_theme().
+ */
+function views_listing_theme($existing, $type, $theme, $path){
+  return array('views_listing_views' => array(
+    'arguments' => array('views' => array()),
+  ));
+}
+
+/**
+ * Theme function for views_listing_views.
+ */
+function theme_views_listing_views($views) {
+  $output = array();
+  foreach ($views as $items) {
+    $raw = $items['raw'];
+    foreach ($raw as $item) {
+      $title = $item['title'];
+      $href = $item['href'];
+      unset($item['title'], $item['href']);
+      $prefix = !empty($item['prefix']) ? $item['prefix'] : '';
+      $suffix = !empty($item['suffix']) ? $item['suffix'] : '';
+      $output[$items['view']->tag][] = $prefix . l($title, $href, $item) . $suffix;
+    }
+  }
+  if (count($output) == 1) {
+    return theme('item_list', current($output));
+  }
+
+  $rendered = '';
+  foreach ($output as $tag => $list) {
+    $rendered .= theme('item_list', $list, ucfirst($tag));
+  }
+  return $rendered;
+}

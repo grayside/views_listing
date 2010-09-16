@@ -1,0 +1,6 @@
+; $Id$
+name = "Views Listing"
+description = "Create a page listing existing Views for end users."
+core = "6.x"
+dependencies[] = "views"
+package = "Views"
