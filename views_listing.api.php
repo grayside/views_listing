@@ -13,7 +13,6 @@
  *  'check': (view|display) Start at the root of the View or iterate across each Display.
  *  'key': The array index of the View. can also be the initial string off an object with array elements.
  *  'value': The value you are seeking.
- * Every filter will be AND'd together by the filtering mechanism.
  */
 function hook_views_listing_plugin_info_alter(&$plugins) {
   $plugins['my_tag'] = array(
