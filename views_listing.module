@@ -59,7 +59,7 @@ function views_listing_filter_views($views, $plugin) {
           // Compare values from the root of the View definition.
           // This is used to filter the entire View.
           case 'view':
-            if ($view->$filter['key'] == $filter['value']) {
+            if (_views_listing_filter($filter['op'], $view->$filter['key'], $filter['value'])) {
               $items[$view->name] = array('view' => $view, 'displays' => $view->display);
               $set_valid = TRUE;
             }
@@ -68,8 +68,7 @@ function views_listing_filter_views($views, $plugin) {
           case 'display':
             $displays = array();
             foreach ($view->display as $key => $display) {
-              $current = $display->$filter['key'];
-              if ($current == $filter['value']) {
+              if (_views_listing_filter($filter['op'], $display->$filter['key'], $filter['value'])) {
                 // If the display is passed by the filter, pass on to the $displays array.
                 $displays[$key] = $display;
               }
@@ -90,6 +89,22 @@ function views_listing_filter_views($views, $plugin) {
   }
   views_listing_process_output($items);
   return $items;
+}
+
+/**
+ * First stab at supporting multiple comparison operations.
+ */
+function _views_listing_filter($op, $key, $value) {
+  switch ($op) {
+    case 'IN':
+      return in_array($key, $value);
+    case 'NOT IN':
+      return !in_array($key, $value);
+    case 'NOT':
+      return $key != $value;
+    default:
+      return $key == $value;
+  }
 }
 
 /**
@@ -137,13 +152,12 @@ function views_listing_process_output(&$views) {
  *  String. The best title available.
  */
 function views_listing_get_display_title($display, $view) {
-  if (!empty($display->display_options['title'])) {
-    return $display->display_options['title'];
+  $view->set_display($display->id);
+  $title = $view->get_title();
+  if (empty($title)) {
+    $title = str_replace('_', ' ', $view->name);
   }
-  elseif (!empty($view->display['default']->display_options['title'])) {
-    return $view->display['default']->display_options['title'];
-  }
-  return $view->name;
+  return $title;
 }
 
 /**
@@ -156,18 +170,16 @@ function views_listing_get_display_title($display, $view) {
  *
  * @return
  *  String. The corrected path.
- *
- * @todo
- *  The path might still have embedded percentage symbols after it's been cleaned using Views arguments.
- *  Percentage symbols at the end should be trimmed off. Percentage symbols in the middle should /invalidate/ the display.
+ * @todo Make this actually work.
  */
 function views_listing_clean_path($path, $args) {
   while(($pos = strpos($path, '%')) !== FALSE) {
     if ($args == NULL) {
-      // If there are no more arguments, it is time to bail.
-      break;
+      $arg['wildcard'] = '';
     }
-    $arg = array_shift($args);
+    else {
+      $arg = array_shift($args);
+    }
     $path = substr_replace($path, $arg['wildcard'], $pos, 1);
   }
   return $path;
@@ -218,9 +230,9 @@ function theme_views_listing_views($views) {
     foreach ($raw as $item) {
       $title = $item['title'];
       $href = $item['href'];
-      unset($item['title'], $item['href']);
       $prefix = !empty($item['prefix']) ? $item['prefix'] : '';
       $suffix = !empty($item['suffix']) ? $item['suffix'] : '';
+      unset($item['title'], $item['href'], $item['prefix'], $item['suffix']);
       $output[$items['view']->tag][] = $prefix . l($title, $href, $item) . $suffix;
     }
   }
